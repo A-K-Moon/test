@@ -36,6 +36,10 @@
 #include "Entities/Object.h"
 #include "Entities/Transports.h"
 
+#ifdef BUILD_ELUNA
+#include "LuaEngine/LuaEngine.h"
+#endif
+
 ScriptMapMapName sQuestEndScripts;
 ScriptMapMapName sQuestStartScripts;
 ScriptMapMapName sSpellScripts;
