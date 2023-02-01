@@ -71,10 +71,12 @@ LoginDatabaseInfo     = "127.0.0.1;3306;mangos;mangos;tbcrealmd"
 WorldDatabaseInfo     = "127.0.0.1;3306;mangos;mangos;tbcmangos"
 CharacterDatabaseInfo = "127.0.0.1;3306;mangos;mangos;tbccharacters"
 LogsDatabaseInfo      = "127.0.0.1;3306;mangos;mangos;tbclogs"
+PlayerbotDatabaseInfo = "127.0.0.1;3306;mangos;mangos;tbcplayerbots"
 LoginDatabaseConnections = 1
 WorldDatabaseConnections = 1
 CharacterDatabaseConnections = 1
 LogsDatabaseConnections = 1
+PlayerbotDatabaseConnections = 1
 MaxPingTime = 30
 WorldServerPort = 8085
 BindIP = "0.0.0.0"
@@ -613,6 +615,16 @@ LogColors = ""
 #        Default: 0 (true)
 #                 1 (false)
 #
+#    InstantFlightPaths
+#        Flight paths will take players to their destination instantly, instead of making them wait to fly there.
+#        Default: 0 (false)
+#                 1 (true)
+#
+#    TaxiFlightFarVisibility
+#        Visibility of taxi flying characters is increased up to 400y, making them visible from afar.
+#        Default: 0 (false)
+#                 1 (true)
+#
 #    AlwaysMaxSkillForLevel
 #        Players will automatically gain max level dependent (weapon/defense) skill when logging in, leveling up etc.
 #        Default: 0 (false)
@@ -841,6 +853,8 @@ DisableWaterBreath = 4
 TaxiFlightChatFix = 0
 LongFlightPathsPersistence = 0
 AllFlightPaths = 0
+InstantFlightPaths = 0
+TaxiFlightFarVisibility = 0
 AlwaysMaxSkillForLevel = 0
 ActivateWeather = 1
 CastUnstuck = 1

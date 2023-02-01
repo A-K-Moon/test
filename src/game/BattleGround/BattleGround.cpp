@@ -272,7 +272,10 @@ BattleGround::~BattleGround()
     // unload map
     // map can be null at bg destruction
     if (m_bgMap)
+    {
         m_bgMap->SetUnload();
+        m_bgMap->SetBG(nullptr);
+    }
 
     // remove from bg free slot queue
     this->RemoveFromBgFreeSlotQueue();
@@ -1708,6 +1711,20 @@ uint32 BattleGround::GetSingleCreatureGuid(uint8 event1, uint8 event2)
 {
     auto itr = m_eventObjects[MAKE_PAIR32(event1, event2)].creatures.begin();
     if (itr != m_eventObjects[MAKE_PAIR32(event1, event2)].creatures.end())
+        return *itr;
+
+    return ObjectGuid();
+}
+
+/**
+  Function returns a gameobject guid from event map
+  @param    event1
+  @param    event2
+*/
+uint32 BattleGround::GetSingleGameObjectGuid(uint8 event1, uint8 event2)
+{
+    auto itr = m_eventObjects[MAKE_PAIR32(event1, event2)].gameobjects.begin();
+    if (itr != m_eventObjects[MAKE_PAIR32(event1, event2)].gameobjects.end())
         return *itr;
 
     return ObjectGuid();

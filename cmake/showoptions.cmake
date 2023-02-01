@@ -73,6 +73,12 @@ else()
   message(STATUS "Build Playerbot       : No  (default)")
 endif()
 
+if(BUILD_IKEBOTS)
+  message(STATUS "Build Ike3 Playerbots : Yes")
+else()
+  message(STATUS "Build Ike3 Playerbots : No  (default)")
+endif()
+
 if(BUILD_EXTRACTORS)
   message(STATUS "Build extractors      : Yes")
 else()

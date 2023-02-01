@@ -47,6 +47,10 @@
  #include "Metric/Metric.h"
 #endif
 
+#ifdef BUILD_IKEBOTS
+#include "playerbot.h"
+#endif
+
 Map::~Map()
 {
 #ifdef BUILD_ELUNA
@@ -162,7 +166,7 @@ Map::Map(uint32 id, time_t expiry, uint32 InstanceId, uint8 SpawnMode)
       m_activeNonPlayersIter(m_activeNonPlayers.end()), m_onEventNotifiedIter(m_onEventNotifiedObjects.end()),
       i_gridExpiry(expiry), m_TerrainData(sTerrainMgr.LoadTerrain(id)),
       i_data(nullptr), i_script_id(0), m_transportsIterator(m_transports.begin()), m_spawnManager(*this),
-      m_variableManager(this), m_defaultLight(GetDefaultMapLight(id))
+      m_variableManager(this), m_defaultLight(GetDefaultMapLight(id)), m_activeAreasTimer(0), hasRealPlayers(false)
 {
     m_weatherSystem = new WeatherSystem(this);
 #ifdef BUILD_ELUNA
@@ -439,8 +443,15 @@ bool Map::Add(Player* player)
     SendInitTransports(player);
 
     NGridType* grid = getNGrid(cell.GridX(), cell.GridY());
+#ifdef BUILD_IKEBOTS
+    if (player->isRealPlayer())
+    {
+#endif
     player->GetViewPoint().Event_AddedToWorld(&(*grid)(cell.CellX(), cell.CellY()));
     UpdateObjectVisibility(player, cell, p);
+#ifdef BUILD_IKEBOTS
+    }
+#endif
 
 #ifdef BUILD_ELUNA
     sEluna->OnMapChanged(player);
@@ -740,19 +751,124 @@ void Map::Update(const uint32& t_diff)
 #endif
     }
 
+    // active areas timer
+    m_activeAreasTimer += t_diff;
+    if (m_activeAreasTimer >= 10000)
+    {
+        m_activeAreasTimer = 0;
+        m_activeAreas.clear();
+        m_activeZones.clear();
+    }
+
+    if (!m_activeAreasTimer && IsContinent() && HasRealPlayers())
+    {
+        for (m_mapRefIter = m_mapRefManager.begin(); m_mapRefIter != m_mapRefManager.end(); ++m_mapRefIter)
+        {
+            Player* plr = m_mapRefIter->getSource();
+            if (plr && plr->IsInWorld())
+            {
+                if (plr->GetPlayerbotAI() && !plr->GetPlayerbotAI()->IsRealPlayer())
+                    continue;
+
+                if (plr->isAFK())
+                    continue;
+
+                if (!plr->isGMVisible())
+                    continue;
+
+                if (find(m_activeZones.begin(), m_activeZones.end(), plr->GetZoneId()) == m_activeZones.end())
+                    m_activeZones.push_back(plr->GetZoneId());
+
+                ContinentArea activeArea = sMapMgr.GetContinentInstanceId(GetId(), plr->GetPositionX(), plr->GetPositionY());
+                // check active area
+                if (activeArea != MAP_NO_AREA)
+                {
+                    if (!HasActiveAreas(activeArea))
+                        m_activeAreas.push_back(activeArea);
+                }
+            }
+        }
+    }
+
+    bool hasPlayers = false;
+    uint32 activeChars = 0;
+    uint32 avgDiff = sWorld.GetAverageDiff();
+    bool updateAI = urand(0, (HasRealPlayers() ? avgDiff : (avgDiff * 3))) < 10;
     /// update players at tick
     for (m_mapRefIter = m_mapRefManager.begin(); m_mapRefIter != m_mapRefManager.end(); ++m_mapRefIter)
     {
         Player* plr = m_mapRefIter->getSource();
         if (plr && plr->IsInWorld())
+        {
+            bool isInActiveArea = false;
+            if (!plr->GetPlayerbotAI() || plr->GetPlayerbotAI()->IsRealPlayer())
+            {
+                isInActiveArea = true;
+
+                hasPlayers = true;
+
+            }
+            else if (HasRealPlayers())
+            {
+                ContinentArea activeArea = MAP_NO_AREA;
+                if (IsContinent())
+                    activeArea = sMapMgr.GetContinentInstanceId(GetId(), plr->GetPositionX(), plr->GetPositionY());
+
+                isInActiveArea = IsContinent() ? (activeArea == MAP_NO_AREA ? false : HasActiveAreas(activeArea)) : HasRealPlayers();
+
+                /*if (isInActiveArea)
+                {
+                    if (avgDiff > 200 && IsContinent())
+                    {
+                        if (find(m_activeZones.begin(), m_activeZones.end(), plr->GetZoneId()) == m_activeZones.end())
+                            isInActiveArea = false;
+                    }
+                }*/
+            }
+            if (plr->GetPlayerbotAI() && plr->GetPlayerbotAI()->HasRealPlayerMaster())
+                isInActiveArea = true;
+            if (plr->InBattleGroundQueue() || plr->InBattleGround())
+                isInActiveArea = true;
+
+            if (isInActiveArea)
+                activeChars++;
+
             plr->Update(t_diff);
+            plr->UpdateAI(t_diff, !(isInActiveArea || updateAI || plr->IsInCombat()));
+        }
+    }
+
+    hasRealPlayers = hasPlayers;
+
+    if (IsContinent() && HasRealPlayers() && HasActiveAreas() && !m_activeAreasTimer)
+    {
+        sLog.outBasic("Map %u: Active Areas:Zones - %u:%u", GetId(), m_activeAreas.size(), m_activeZones.size());
+        sLog.outBasic("Map %u: Active Areas Chars - %u of %u", GetId(), activeChars, m_mapRefManager.getSize());
     }
 
     for (m_mapRefIter = m_mapRefManager.begin(); m_mapRefIter != m_mapRefManager.end(); ++m_mapRefIter)
     {
         Player* player = m_mapRefIter->getSource();
-        if (!player->IsInWorld() || !player->IsPositionValid())
+        if (!player || !player->IsInWorld() || !player->IsPositionValid())
             continue;
+
+#ifdef BUILD_IKEBOTS
+        if (!player->isRealPlayer()) //For non-players only load the grid.
+        {
+            CellPair center = MaNGOS::ComputeCellPair(player->GetPositionX(), player->GetPositionY()).normalize();
+            uint32 cell_id = (center.y_coord * TOTAL_NUMBER_OF_CELLS_PER_MAP) + center.x_coord;
+
+            if (!isCellMarked(cell_id))
+            {
+                Cell cell(center);
+                const uint32 x = cell.GridX();
+                const uint32 y = cell.GridY();
+                if (!cell.NoCreate() || loaded(GridPair(x, y)))
+                    EnsureGridLoaded(player->GetCurrentCell());
+            }
+            continue;
+        }
+#endif
 
         VisitNearbyCellsOf(player, grid_object_update, world_object_update);
 
@@ -762,6 +878,7 @@ void Map::Update(const uint32& t_diff)
     }
 
     // non-player active objects
+    bool updateObj = urand(0, (HasRealPlayers() ? avgDiff : (avgDiff * 3))) < 10;
     if (!m_activeNonPlayers.empty())
     {
         for (m_activeNonPlayersIter = m_activeNonPlayers.begin(); m_activeNonPlayersIter != m_activeNonPlayers.end();)
@@ -775,6 +892,27 @@ void Map::Update(const uint32& t_diff)
 
             if (!obj->IsInWorld() || !obj->IsPositionValid())
                 continue;
+
+            // skip objects if world is laggy
+            if (IsContinent() && avgDiff > 100)
+            {
+                bool isInActiveArea = false;
+
+                ContinentArea activeArea = MAP_NO_AREA;
+                if (IsContinent())
+                    activeArea = sMapMgr.GetContinentInstanceId(GetId(), obj->GetPositionX(), obj->GetPositionY());
+
+                isInActiveArea = IsContinent() ? (activeArea == MAP_NO_AREA ? false : HasActiveAreas(activeArea)) : HasRealPlayers();
+
+                if (isInActiveArea && IsContinent())
+                {
+                    if (avgDiff > 150 && find(m_activeZones.begin(), m_activeZones.end(), obj->GetZoneId()) == m_activeZones.end())
+                        isInActiveArea = false;
+                }
+
+                if (!isInActiveArea && !updateObj)
+                    continue;
+            }
 
             objToUpdate.insert(obj);
 
@@ -806,6 +944,12 @@ void Map::Update(const uint32& t_diff)
     for (auto wObj : objToUpdate)
     {
         wObj->Update(t_diff);
+        // update visibility of far visible objects
+        if (wObj->GetVisibilityData().GetVisibilityDistance() > GetVisibilityDistance() && !urand(0, 4))
+        {
+            wObj->GetViewPoint().Call_UpdateVisibilityForOwner();
+            wObj->UpdateObjectVisibility();
+        }
         ++count;
     }
 
@@ -898,7 +1042,12 @@ void Map::Remove(Player* player, bool remove)
     SendRemoveTransports(player);
     UpdateObjectVisibility(player, cell, p);
 
+#ifdef BUILD_IKEBOTS
+    if (!player->GetPlayerbotAI())
+        player->ResetMap();
+#else
     player->ResetMap();
+#endif
     if (remove)
         DeleteFromWorld(player);
 }
@@ -932,7 +1081,7 @@ void Map::Remove(T* obj, bool remove)
     UpdateObjectVisibility(obj, cell, p);                   // i think will be better to call this function while object still in grid, this changes nothing but logically is better(as for me)
     RemoveFromGrid(obj, grid, cell);
 
-    m_objRemoveList.insert(obj->GetObjectGuid());
+    //m_objRemoveList.insert(obj->GetObjectGuid());
 
     if (remove)
         // if option set then object already saved at this moment
@@ -963,20 +1112,26 @@ void Map::PlayerRelocation(Player* player, float x, float y, float z, float orie
         DEBUG_FILTER_LOG(LOG_FILTER_PLAYER_MOVES, "Player %s relocation grid[%u,%u]cell[%u,%u]->grid[%u,%u]cell[%u,%u]", player->GetName(), old_cell.GridX(), old_cell.GridY(), old_cell.CellX(), old_cell.CellY(), new_cell.GridX(), new_cell.GridY(), new_cell.CellX(), new_cell.CellY());
 
         NGridType* oldGrid = getNGrid(old_cell.GridX(), old_cell.GridY());
-        RemoveFromGrid(player, oldGrid, old_cell);
-        if (!old_cell.DiffGrid(new_cell))
-            AddToGrid(player, oldGrid, new_cell);
-        else
-            EnsureGridLoadedAtEnter(new_cell, player);
+        if (oldGrid)
+        {
+            RemoveFromGrid(player, oldGrid, old_cell);
+            if (!old_cell.DiffGrid(new_cell))
+                AddToGrid(player, oldGrid, new_cell);
+            else
+                EnsureGridLoadedAtEnter(new_cell, player);
+        }
 
         NGridType* newGrid = getNGrid(new_cell.GridX(), new_cell.GridY());
-        player->GetViewPoint().Event_GridChanged(&(*newGrid)(new_cell.CellX(), new_cell.CellY()));
+        if (newGrid)
+        {
+            player->GetViewPoint().Event_GridChanged(&(*newGrid)(new_cell.CellX(), new_cell.CellY()));
+        }
     }
 
     player->OnRelocated();
 
     NGridType* newGrid = getNGrid(new_cell.GridX(), new_cell.GridY());
-    if (!same_cell && newGrid->GetGridState() != GRID_STATE_ACTIVE)
+    if (newGrid && !same_cell && newGrid->GetGridState() != GRID_STATE_ACTIVE)
     {
         ResetGridExpiry(*newGrid, 0.1f);
         newGrid->SetGridState(GRID_STATE_ACTIVE);
@@ -1292,7 +1447,6 @@ void Map::AddObjectToRemoveList(WorldObject* obj)
         sEluna->OnRemove(gameobject);
 #endif
     obj->CleanupsBeforeDelete();                            // remove or simplify at least cross referenced links
-
     i_objectsToRemove.insert(obj);
     // DEBUG_LOG("Object (GUID: %u TypeId: %u ) added to removing list.",obj->GetGUIDLow(),obj->GetTypeId());
 }
@@ -1306,6 +1460,7 @@ void Map::RemoveAllObjectsInRemoveList()
     while (!i_objectsToRemove.empty())
     {
         WorldObject* obj = *i_objectsToRemove.begin();
+
         i_objectsToRemove.erase(i_objectsToRemove.begin());
 
         switch (obj->GetTypeId())
@@ -1912,6 +2067,7 @@ BattleGroundMap::BattleGroundMap(uint32 id, time_t expiry, uint32 InstanceId, ui
 
 BattleGroundMap::~BattleGroundMap()
 {
+    UnloadAll(true);
 }
 
 void BattleGroundMap::Initialize(bool)
@@ -1921,6 +2077,9 @@ void BattleGroundMap::Initialize(bool)
 
 void BattleGroundMap::Update(const uint32& diff)
 {
+    if (!GetBG())
+        return;
+
     Map::Update(diff);
 
     GetBG()->Update(diff);
@@ -2241,6 +2400,7 @@ void Map::SendObjectUpdates()
     while (!i_objectsToClientUpdate.empty())
     {
         Object* obj = *i_objectsToClientUpdate.begin();
+
         i_objectsToClientUpdate.erase(i_objectsToClientUpdate.begin());
         obj->BuildUpdateData(update_players);
     }

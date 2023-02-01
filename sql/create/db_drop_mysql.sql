@@ -6,3 +6,4 @@ DROP DATABASE IF EXISTS `tbcmangos`;
 DROP DATABASE IF EXISTS `tbclogs`;
 DROP DATABASE IF EXISTS `tbccharacters`;
 DROP DATABASE IF EXISTS `tbcrealmd`;
+DROP DATABASE IF EXISTS `tbcplayerbots`;

@@ -350,6 +350,8 @@ enum eConfigBoolValues
     CONFIG_BOOL_TAXI_FLIGHT_CHAT_FIX,
     CONFIG_BOOL_LONG_TAXI_PATHS_PERSISTENCE,
     CONFIG_BOOL_ALL_TAXI_PATHS,
+    CONFIG_BOOL_INSTANT_TAXI,
+    CONFIG_BOOL_FAR_VISIBLE_TAXI,
     CONFIG_BOOL_DECLINED_NAMES_USED,
     CONFIG_BOOL_SKILL_FAIL_LOOT_FISHING,
     CONFIG_BOOL_SKILL_FAIL_GAIN_FISHING,
@@ -650,6 +652,8 @@ class World
         static uint32 GetCurrentMSTime() { return m_currentMSTime; }
         static TimePoint GetCurrentClockTime() { return m_currentTime; }
         static uint32 GetCurrentDiff() { return m_currentDiff; }
+        static uint32 GetAverageDiff() { return m_averageDiff; }
+        static uint32 GetMaxDiff() { return m_maxDiff; }
 
         template<typename T>
         void ExecuteForAllSessions(T executor)
@@ -776,6 +780,11 @@ class World
         static uint32 m_currentMSTime;
         static TimePoint m_currentTime;
         static uint32 m_currentDiff;
+        static uint32 m_currentDiffSum;
+        static uint32 m_currentDiffSumIndex;
+        static uint32 m_averageDiff;
+        static uint32 m_maxDiff;
+        static std::list<uint32> m_histDiff;
 
         Messager<World> m_messager;
 

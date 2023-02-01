@@ -55,7 +55,12 @@
 #endif
 
 #ifdef BUILD_METRICS
- #include "Metric/Metric.h"
+#include "Metric/Metric.h"
+#endif
+
+#ifdef BUILD_IKEBOTS
+#include "playerbot.h"
+#include "GuildTaskMgr.h"
 #endif
 
 #include <math.h>
@@ -1439,6 +1444,12 @@ void Unit::JustKilledCreature(Unit* killer, Creature* victim, Player* responsibl
 #else
         if (BattleGround* bg = responsiblePlayer->GetBattleGround())
             bg->HandleKillUnit(victim, responsiblePlayer);
+#endif
+
+#ifdef BUILD_IKEBOTS
+    // Guild Task check
+    if (responsiblePlayer && sPlayerbotAIConfig.guildTaskEnabled)
+        sGuildTaskMgr.CheckKillTask(responsiblePlayer, victim);
 #endif
 
     // Notify the outdoor pvp script

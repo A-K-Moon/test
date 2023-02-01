@@ -67,6 +67,7 @@
 #include "Cinematics/CinematicMgr.h"
 #include "Maps/TransportMgr.h"
 #include "Anticheat/Anticheat.hpp"
+#include "Metric/Metric.h"
 
 #ifdef BUILD_ELUNA
 #include "LuaEngine/LuaEngine.h"
@@ -77,7 +78,13 @@
 #endif
 
 #ifdef BUILD_METRICS
- #include "Metric/Metric.h"
+#include "Metric/Metric.h"
+#endif
+
+#ifdef BUILD_IKEBOTS
+#include "AhBot.h"
+#include "PlayerbotAIConfig.h"
+#include "RandomPlayerbotMgr.h"
 #endif
 
 #include <algorithm>
@@ -103,6 +110,11 @@ uint32 World::m_relocation_ai_notify_delay = 1000u;
 uint32 World::m_currentMSTime = 0;
 TimePoint World::m_currentTime = TimePoint();
 uint32 World::m_currentDiff = 0;
+uint32 World::m_currentDiffSum = 0;
+uint32 World::m_currentDiffSumIndex = 0;
+uint32 World::m_averageDiff = 0;
+uint32 World::m_maxDiff = 0;
+list<uint32> World::m_histDiff;
 
 /// World constructor
 World::World() : mail_timer(0), mail_timer_expires(0), m_NextDailyQuestReset(0), m_NextWeeklyQuestReset(0), m_NextMonthlyQuestReset(0), m_opcodeCounters(NUM_MSG_TYPES)
@@ -115,6 +127,7 @@ World::World() : mail_timer(0), mail_timer_expires(0), m_NextDailyQuestReset(0),
     m_startTime = m_gameTime;
     m_maxActiveSessionCount = 0;
     m_maxQueuedSessionCount = 0;
+    m_maxDiff = 0;
 
     m_defaultDbcLocale = DEFAULT_LOCALE;
     m_availableDbcLocaleMask = 0;
@@ -538,9 +551,12 @@ void World::LoadConfigSettings(bool reload)
 
     setConfigMinMax(CONFIG_UINT32_START_ARENA_POINTS, "StartArenaPoints", 0, 0, getConfig(CONFIG_UINT32_MAX_ARENA_POINTS));
 
+
     setConfig(CONFIG_BOOL_TAXI_FLIGHT_CHAT_FIX, "TaxiFlightChatFix", false);
     setConfig(CONFIG_BOOL_LONG_TAXI_PATHS_PERSISTENCE, "LongFlightPathsPersistence", false);
     setConfig(CONFIG_BOOL_ALL_TAXI_PATHS, "AllFlightPaths", false);
+    setConfig(CONFIG_BOOL_INSTANT_TAXI, "InstantFlightPaths", false);
+    setConfig(CONFIG_BOOL_FAR_VISIBLE_TAXI, "TaxiFlightFarVisibility", false);
 
     setConfig(CONFIG_BOOL_INSTANCE_IGNORE_LEVEL, "Instance.IgnoreLevel", false);
     setConfig(CONFIG_BOOL_INSTANCE_IGNORE_RAID,  "Instance.IgnoreRaid", false);
@@ -1440,6 +1456,9 @@ void World::SetInitialWorldSettings()
 #ifdef BUILD_PLAYERBOT
     PlayerbotMgr::SetInitialWorldSettings();
 #endif
+#ifdef BUILD_IKEBOTS
+    sPlayerbotAIConfig.Initialize();
+#endif
 
 #ifdef BUILD_ELUNA
     ///- Run eluna scripts.
@@ -1511,6 +1530,59 @@ void World::Update(uint32 diff)
     m_currentMSTime = WorldTimer::getMSTime();
     m_currentTime = std::chrono::time_point_cast<std::chrono::milliseconds>(Clock::now());
     m_currentDiff = diff;
+    m_currentDiffSum += diff;
+    m_currentDiffSumIndex++;
+    m_histDiff.push_back(diff);
+    m_maxDiff = std::max(m_maxDiff, diff);
+
+    while (m_histDiff.size() >= 600)
+    {
+        m_currentDiffSum -= m_histDiff.front();
+        m_histDiff.pop_front();
+    }
+
+    m_averageDiff = (uint32)(m_currentDiffSum / m_histDiff.size());
+
+    if (m_currentDiffSumIndex && m_currentDiffSumIndex % 60 == 0)
+    {
+        //m_averageDiff = (uint32)(m_currentDiffSum / m_currentDiffSumIndex);
+         //if (m_maxDiff < m_averageDiff)
+         //    m_maxDiff = m_averageDiff;
+        sLog.outDetail("Avg Diff: %u. Sessions online: %u.", m_averageDiff, (uint32)GetActiveSessionCount());
+        sLog.outDetail("Max Diff: %u.", m_maxDiff);
+    }
+    if (m_currentDiffSum % 3000 == 0)
+    {
+        m_maxDiff = *std::max_element(m_histDiff.begin(), m_histDiff.end());
+    }
+    /*
+    if (m_currentDiffSum > 300000)
+    {
+        m_currentDiffSum = 0;
+        m_currentDiffSumIndex = 0;
+        if (m_maxDiff > m_averageDiff)
+        {
+            m_maxDiff = m_averageDiff;
+            sLog.outBasic("Max Diff reset to: %u.", m_maxDiff);
+        }
+    }
+    if (GetActiveSessionCount())
+    {
+        if (m_currentDiffSumIndex && (m_currentDiffSumIndex % 5 == 0))
+        {
+            uint32 tempDiff = (uint32)(m_currentDiffSum / m_currentDiffSumIndex);
+            if (tempDiff > m_averageDiff)
+            {
+                m_averageDiff = tempDiff;
+            }
+            if (m_maxDiff < tempDiff)
+            {
+                m_maxDiff = tempDiff;
+                sLog.outBasic("Max Diff Increased: %u.", m_maxDiff);
+            }
+        }
+    }
+    */
 
     ///- Update the different timers
     for (auto& m_timer : m_timers)
@@ -1565,6 +1637,19 @@ void World::Update(uint32 diff)
         sAuctionHouseBot.Update();
         m_timers[WUPDATE_AHBOT].Reset();
     }
+#endif
+
+#ifdef BUILD_IKEBOTS
+#ifndef BUILD_AHBOT
+    /// <li> Handle AHBot operations
+    if (m_timers[WUPDATE_AHBOT].Passed())
+    {
+        auctionbot.Update();
+        m_timers[WUPDATE_AHBOT].Reset();
+    }
+#endif
+    sRandomPlayerbotMgr.UpdateAI(diff);
+    sRandomPlayerbotMgr.UpdateSessions(diff);
 #endif
 
     /// <li> Handle session updates
@@ -2067,6 +2152,10 @@ void World::ShutdownServ(uint32 time, uint32 options, uint8 exitcode)
     ///- Used by Eluna
     sEluna->OnShutdownInitiate(ShutdownExitCode(exitcode), ShutdownMask(options));
 #endif
+
+#ifdef BUILD_IKEBOTS
+    sRandomPlayerbotMgr.LogoutAllBots();
+#endif
 }
 
 /// Display a shutdown message to the user(s)
@@ -2179,6 +2268,7 @@ void World::UpdateResultQueue()
     CharacterDatabase.ProcessResultQueue();
     WorldDatabase.ProcessResultQueue();
     LoginDatabase.ProcessResultQueue();
+    PlayerbotDatabase.ProcessResultQueue();
 }
 
 void World::UpdateRealmCharCount(uint32 accountId)
